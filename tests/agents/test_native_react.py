@@ -172,6 +172,36 @@ class TestNativeReActParsing:
         result = parse(text)
         assert result["final_answer"] == "42"
 
+    def test_parse_numbered_action(self):
+        parse = self._parser()
+        text = (
+            "Thought: I should write the file.\n"
+            "Action 1: file_write\n"
+            'Action Input: {"path": "x.txt", "content": "ok"}'
+        )
+        result = parse(text)
+        assert result["action"] == "file_write"
+        assert '"path": "x.txt"' in result["action_input"]
+
+    def test_parse_fenced_json_action_input(self):
+        parse = self._parser()
+        text = (
+            "Thought: I should write the file.\n"
+            "Action: file_write\n"
+            "Action Input:\n"
+            "```json\n"
+            "{\n"
+            '  "path": "x.txt",\n'
+            '  "content": "ok"\n'
+            "}\n"
+            "```"
+        )
+        result = parse(text)
+        assert result["action"] == "file_write"
+        assert result["action_input"].startswith("{")
+        assert result["action_input"].endswith("}")
+        assert "```" not in result["action_input"]
+
 
 # ---------------------------------------------------------------------------
 # Agent execution tests

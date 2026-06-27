@@ -111,19 +111,42 @@ class NativeReActAgent(ToolUsingAgent):
             return result
 
         # Extract Action and Action Input
-        action_match = re.search(r"Action:\s*(.+)", text, re.IGNORECASE)
+        action_match = re.search(
+            r"(?:^|\n)\s*Action(?:\s+\d+)?\s*:\s*(.+)",
+            text,
+            re.IGNORECASE,
+        )
         if action_match:
             result["action"] = action_match.group(1).strip()
 
         input_match = re.search(
-            r"Action Input:\s*(.+?)(?=\n\n|\nThought:|\Z)",
+            r"(?:^|\n)\s*Action Input(?:\s+\d+)?\s*:\s*(.+?)(?=\n\n|\nThought:|\Z)",
             text,
             re.DOTALL | re.IGNORECASE,
         )
         if input_match:
-            result["action_input"] = input_match.group(1).strip()
+            result["action_input"] = self._clean_action_input(
+                input_match.group(1).strip()
+            )
 
         return result
+
+    @staticmethod
+    def _clean_action_input(value: str) -> str:
+        """Normalize model-produced ReAct JSON arguments.
+
+        Local models often wrap Action Input JSON in fenced Markdown blocks or
+        label the fence as json. The executor wants the raw JSON string.
+        """
+        stripped = value.strip()
+        fence_match = re.match(
+            r"^```(?:json|JSON)?\s*(.*?)\s*```$",
+            stripped,
+            re.DOTALL,
+        )
+        if fence_match:
+            return fence_match.group(1).strip()
+        return stripped
 
     def run(
         self,
