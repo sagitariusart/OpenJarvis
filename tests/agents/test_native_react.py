@@ -429,6 +429,36 @@ class TestNativeReActAgent:
         assert result.content == "Just a plain answer."
         assert result.turns == 1
 
+    def test_tool_required_request_reprompts_fake_final_answer(self):
+        """Inspection requests need an Observation before Final Answer."""
+        engine = MagicMock()
+        engine.engine_id = "mock"
+        engine.generate.side_effect = [
+            _engine_response(
+                "Thought: I inspected it.\n"
+                "Final Answer: I confirmed the system status."
+            ),
+            _engine_response(
+                "Thought: I need a real observation.\n"
+                "Action: calculator\n"
+                'Action Input: {"expression": "2+2"}'
+            ),
+            _engine_response("Thought: I have an observation.\nFinal Answer: 4"),
+        ]
+        agent = NativeReActAgent(
+            engine,
+            "test-model",
+            tools=[_CalculatorStub()],
+        )
+
+        result = agent.run("inspect system status")
+
+        assert result.content == "4"
+        assert result.turns == 3
+        assert len(result.tool_results) == 1
+        assert result.tool_results[0].tool_name == "calculator"
+        assert result.tool_results[0].content == "4"
+
     def test_observation_appended_to_messages(self):
         """Observation from tool result is sent back to the engine."""
         engine = MagicMock()

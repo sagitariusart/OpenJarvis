@@ -143,6 +143,34 @@ class TestMemoryServiceWiring:
         assert resp.status_code == 200
         assert spy.submissions == [("remember this", "agent reply")]
 
+    def test_streaming_completion_uses_configured_agent(self):
+        """Desktop streaming chat must not bypass the tool-capable agent."""
+        engine = _make_engine()
+        agent = _make_agent(content="agent streamed reply")
+        spy = _SpyMemoryService()
+        app = create_app(
+            engine,
+            "test-model",
+            agent=agent,
+            memory_service=spy,
+            config=_test_config(),
+        )
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "inspect status"}],
+                "stream": True,
+            },
+        )
+
+        assert resp.status_code == 200
+        assert "agent streamed reply" in resp.text
+        agent.run.assert_called_once()
+        assert spy.submissions == [("inspect status", "agent streamed reply")]
+
     def test_non_streaming_completion_publishes_completed_exchange(self):
         bus = EventBus(record_history=True)
         engine = _make_engine(content="event reply")

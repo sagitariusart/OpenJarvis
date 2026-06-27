@@ -203,6 +203,16 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 bus=getattr(request.app.state, "bus", None),
                 memory_service=getattr(request.app.state, "memory_service", None),
             )
+        if agent is not None:
+            return await _handle_agent_stream(
+                agent,
+                model,
+                request_body,
+                complexity_info,
+                trace_store=getattr(request.app.state, "trace_store", None),
+                bus=getattr(request.app.state, "bus", None),
+                memory_service=getattr(request.app.state, "memory_service", None),
+            )
         return await _handle_stream(
             engine,
             model,
@@ -497,6 +507,85 @@ def _handle_agent(
         ],
         usage=usage,
         complexity=complexity_info,
+    )
+
+
+async def _handle_agent_stream(
+    agent,
+    model: str,
+    req: ChatCompletionRequest,
+    complexity_info=None,
+    *,
+    trace_store=None,
+    bus=None,
+    memory_service=None,
+):
+    """Stream an agent-backed response for the desktop chat UI.
+
+    The desktop UI sends ``stream:true`` for normal chat. If this route goes
+    straight to ``engine.stream()``, a configured tool-using agent never gets a
+    chance to execute tools; it can only narrate. We run the same agent path as
+    non-streaming requests, then emit the completed answer as SSE chunks so the
+    UI contract stays OpenAI-compatible.
+    """
+
+    import json as _json
+
+    response = _handle_agent(
+        agent,
+        model,
+        req,
+        complexity_info,
+        trace_store=trace_store,
+        bus=bus,
+    )
+    content = response.choices[0].message.content or ""
+    query_text = ""
+    for _m in reversed(req.messages):
+        if _m.role == "user" and _m.content:
+            query_text = _m.content
+            break
+
+    async def generate():
+        chunk_id = response.id
+        first_chunk = ChatCompletionChunk(
+            id=chunk_id,
+            model=model,
+            choices=[StreamChoice(delta=DeltaMessage(role="assistant"))],
+        )
+        yield f"data: {first_chunk.model_dump_json()}\n\n"
+
+        if content:
+            content_chunk = ChatCompletionChunk(
+                id=chunk_id,
+                model=model,
+                choices=[StreamChoice(delta=DeltaMessage(content=content))],
+            )
+            yield f"data: {content_chunk.model_dump_json()}\n\n"
+            _record_completed_exchange(
+                memory_service,
+                query_text,
+                content,
+                bus=bus,
+                source="server.chat.stream.agent",
+            )
+
+        finish_data = ChatCompletionChunk(
+            id=chunk_id,
+            model=model,
+            choices=[StreamChoice(delta=DeltaMessage(), finish_reason="stop")],
+        )
+        finish_dict = _json.loads(finish_data.model_dump_json())
+        finish_dict["usage"] = response.usage.model_dump()
+        if complexity_info is not None:
+            finish_dict["complexity"] = complexity_info.model_dump()
+        yield f"data: {_json.dumps(finish_dict)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
 
 

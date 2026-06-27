@@ -13,6 +13,8 @@ EXPECTED_TOOLS = {
     "calculator",
     # think.py
     "think",
+    # system_status.py
+    "system_status",
     # retrieval.py
     "retrieval",
     # llm_tool.py

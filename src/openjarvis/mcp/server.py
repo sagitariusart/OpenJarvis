@@ -104,6 +104,12 @@ class MCPServer:
             _tool_classes.append(ReplTool)
         except ImportError:
             pass
+        try:
+            from openjarvis.tools.system_status import SystemStatusTool
+
+            _tool_classes.append(SystemStatusTool)
+        except ImportError:
+            pass
 
         # Storage MCP tools
         try:

@@ -32,6 +32,12 @@ Action Input: <json arguments>
 Thought: <your reasoning>
 Final Answer: <your answer>
 
+Never claim that you inspected, checked, listed, read, searched, calculated,
+or verified something unless you first emitted an Action, received an
+Observation, and are using that Observation. For read-only inspection/status
+requests, your first response must be an Action using an appropriate available
+tool.
+
 # Using Skills
 
 Tools whose names begin with `skill_` are SKILLS. When you call a skill tool,
@@ -132,6 +138,60 @@ class NativeReActAgent(ToolUsingAgent):
         return result
 
     @staticmethod
+    def _requires_tool_execution(user_input: str) -> bool:
+        """Return True when the request asks for live inspection/evidence.
+
+        Conversational prompts can finish directly. Requests that ask the agent
+        to inspect, learn, list, check, read, search, calculate, or verify live
+        state need at least one real tool Observation before a final answer.
+        """
+
+        text = user_input.lower()
+        phrases = (
+            "learn my system",
+            "inspect",
+            "status",
+            "available",
+            "list",
+            "check",
+            "read",
+            "search",
+            "look up",
+            "calculate",
+            "verify",
+            "diagnostic",
+            "resources",
+            "models",
+            "files",
+            "folder",
+            "directory",
+            "system",
+        )
+        return any(phrase in text for phrase in phrases)
+
+    def _reprompt_for_required_tool(
+        self,
+        messages: list[Message],
+        content: str,
+        user_input: str,
+    ) -> None:
+        tool_names = ", ".join(t.spec.name for t in self._tools) or "(none)"
+        messages.append(Message(role=Role.ASSISTANT, content=content))
+        messages.append(
+            Message(
+                role=Role.USER,
+                content=(
+                    "Your previous response did not execute a tool. The user "
+                    "requested live read-only inspection or verification, so "
+                    "you must now respond with Action and Action Input for one "
+                    "appropriate available tool before any Final Answer. "
+                    f"Available tools: {tool_names}. "
+                    f"Original request: {user_input}"
+                ),
+            )
+        )
+
+    @staticmethod
     def _clean_action_input(value: str) -> str:
         """Normalize model-produced ReAct JSON arguments.
 
@@ -193,6 +253,7 @@ class NativeReActAgent(ToolUsingAgent):
 
         all_tool_results: list[ToolResult] = []
         turns = 0
+        needs_tool = self._requires_tool_execution(input)
         total_usage: dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -215,6 +276,9 @@ class NativeReActAgent(ToolUsingAgent):
 
             # Final answer?
             if parsed["final_answer"]:
+                if needs_tool and not all_tool_results and self._tools:
+                    self._reprompt_for_required_tool(messages, content, input)
+                    continue
                 self._emit_turn_end(turns=turns)
                 msg_dicts = [_message_to_dict(m) for m in messages]
                 return AgentResult(
@@ -226,6 +290,9 @@ class NativeReActAgent(ToolUsingAgent):
 
             # No action? Treat content as final answer
             if not parsed["action"]:
+                if needs_tool and not all_tool_results and self._tools:
+                    self._reprompt_for_required_tool(messages, content, input)
+                    continue
                 self._emit_turn_end(turns=turns)
                 msg_dicts = [_message_to_dict(m) for m in messages]
                 return AgentResult(
